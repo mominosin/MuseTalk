@@ -484,21 +484,98 @@ avator_1:
     audio_1: "data/audio/clip2.wav"
 ```
 
-### 6.4 パフォーマンス最適化
+### 6.4 パフォーマンス最適化パラメータ詳細
 
-#### メモリ使用量の削減
+推論スクリプト (`scripts/inference.py`) で使用可能なパラメータの一覧です。
+
+#### 主要パラメータ一覧
+
+| パラメータ | デフォルト | 範囲/選択肢 | 説明 |
+|-----------|-----------|------------|------|
+| `--use_float16` | False | フラグ | 半精度演算を有効化。**VRAMを約半分に削減**、推論速度も向上 |
+| `--batch_size` | 8 | 1～32+ | 一度に処理するフレーム数。**大きいほど高速だがVRAM消費増** |
+| `--fps` | 25 | 15～60 | 出力動画のフレームレート。**25fps推奨**（音声同期が最適） |
+| `--gpu_id` | 0 | 0～N | 使用するGPU番号（マルチGPU環境用） |
+| `--bbox_shift` | 0 | -9～+9 | 口の開き具合調整（**v1.0のみ有効**、v1.5は固定） |
+| `--extra_margin` | 10 | 0～50 | 顔領域の追加マージン（v1.5用） |
+| `--parsing_mode` | jaw | jaw/face | 顔合成モード。jawは顎周辺、faceは顔全体 |
+| `--left_cheek_width` | 90 | 50～150 | 左頬の幅（v1.5用、ブレンド調整） |
+| `--right_cheek_width` | 90 | 50～150 | 右頬の幅（v1.5用、ブレンド調整） |
+| `--audio_padding_length_left` | 2 | 0～5 | 音声の左パディング長（フレーム単位） |
+| `--audio_padding_length_right` | 2 | 0～5 | 音声の右パディング長（フレーム単位） |
+
+#### パラメータ調整の効果
+
+##### `--batch_size`（バッチサイズ）
+
+| 値 | VRAM使用量 | 推論速度 | 推奨環境 |
+|----|-----------|---------|---------|
+| 1-2 | 約4GB | 遅い | 4GB VRAM（RTX 3050等） |
+| 4-8 | 約6-8GB | 標準 | 8GB VRAM（RTX 3070等） |
+| 16-32 | 約12-16GB | 高速 | 16GB+ VRAM（T4, RTX 4090等） |
 
 ```bash
-# float16を使用（メモリ半減）
-python app.py --use_float16
+# 例: 低VRAM環境向け
+python -m scripts.inference --batch_size 2 --use_float16 ...
+
+# 例: 高速処理向け（16GB+ VRAM）
+python -m scripts.inference --batch_size 16 --use_float16 ...
 ```
 
-#### 推論速度の向上
+##### `--fps`（フレームレート）
+
+| 値 | 品質 | 処理時間 | 用途 |
+|----|------|---------|------|
+| 15 | やや粗い | 短い | プレビュー/テスト用 |
+| 25 | **推奨** | 標準 | 本番用（音声同期最適） |
+| 30 | 滑らか | やや長い | 高品質出力 |
+| 60 | 非常に滑らか | 長い | 特殊用途 |
+
+##### `--use_float16`（半精度演算）
 
 ```bash
-# scripts/inference.py の設定例
---batch_size 4              # バッチサイズ調整
---fps 25                    # フレームレート（25fps推奨）
+# 有効化（推奨）
+python app.py --use_float16
+
+# 効果:
+# - VRAMを約50%削減（8GB → 4GB程度）
+# - 推論速度が10-20%向上
+# - 品質への影響は最小限
+```
+
+##### `--extra_margin`（追加マージン）
+
+v1.5で顔の切り抜き領域を調整します。
+
+| 値 | 効果 |
+|----|------|
+| 0-5 | 顔領域を狭く（顎が切れる可能性） |
+| 10 | **デフォルト**（バランス良好） |
+| 20-50 | 顔領域を広く（首まで含む可能性） |
+
+##### `--parsing_mode`（合成モード）
+
+| モード | 説明 |
+|--------|------|
+| `jaw` | **デフォルト**。顎・口周辺のみを合成。自然な仕上がり |
+| `face` | 顔全体を合成。動きが大きい場合に使用 |
+
+#### メモリ不足時の推奨設定
+
+```bash
+# 4GB VRAM環境（最小構成）
+python -m scripts.inference \
+    --batch_size 1 \
+    --use_float16 \
+    --fps 25 \
+    ...
+
+# 8GB VRAM環境（標準構成）
+python -m scripts.inference \
+    --batch_size 4 \
+    --use_float16 \
+    --fps 25 \
+    ...
 ```
 
 ### 6.5 入力データの要件
@@ -621,11 +698,33 @@ pip install xtcocotools munkres json_tricks
 ### 7.4 huggingface-cli: command not found
 
 **解決策**:
-```bash
-pip install -U "huggingface_hub[cli]"
+
+新しいバージョンの`huggingface_hub`ではCLIが含まれていない場合があります。
+Pythonスクリプトでダウンロードする方法を使用してください（セクション4.5参照）。
+
+### 7.5 transformers / huggingface-hub バージョン互換性エラー
+
+**エラー内容1**:
+```
+ImportError: huggingface-hub>=0.19.3,<1.0 is required for a normal functioning of this module, but found huggingface-hub==1.2.4.
 ```
 
-### 7.5 Hugging Face 404 エラー
+**エラー内容2**:
+```
+AttributeError: module 'torch' has no attribute 'compiler'
+```
+
+**原因**:
+- 最新の`transformers`がPyTorch 2.1+を必要とするが、MuseTalkはPyTorch 2.0.1を使用
+- `huggingface-hub`のバージョンが新しすぎる
+
+**解決策**:
+```bash
+# 互換性のあるバージョンに固定
+pip install transformers==4.39.2 huggingface-hub==0.23.0
+```
+
+### 7.6 Hugging Face 404 エラー
 
 **エラー内容**:
 ```
@@ -642,7 +741,7 @@ huggingface-cli download TMElyralab/MuseTalk \
   --include "musetalk/musetalk.json" "musetalk/pytorch_model.bin"
 ```
 
-### 7.6 CUDA関連エラー
+### 7.7 CUDA関連エラー
 
 ```bash
 # CUDA確認
@@ -653,7 +752,7 @@ python -c "import torch; print(torch.cuda.is_available())"
 python -c "import torch; print(torch.version.cuda)"
 ```
 
-### 7.7 メモリ不足 (OOM)
+### 7.8 メモリ不足 (OOM)
 
 ```bash
 # float16を使用
@@ -663,7 +762,7 @@ python app.py --use_float16
 # configs内のbatch_sizeを減らす
 ```
 
-### 7.8 FFmpegエラー
+### 7.9 FFmpegエラー
 
 ```bash
 # FFmpegパス確認
@@ -673,7 +772,7 @@ which ffmpeg
 export FFMPEG_PATH=$(which ffmpeg)
 ```
 
-### 7.9 権限エラー
+### 7.10 権限エラー
 
 ```bash
 # スクリプトに実行権限を付与
