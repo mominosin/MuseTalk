@@ -285,7 +285,67 @@ curl -L https://download.pytorch.org/models/resnet18-5c106cde.pth \
   -o models/face-parse-bisent/resnet18-5c106cde.pth
 ```
 
-### 4.5 自動ダウンロードスクリプト（代替）
+### 4.5 Pythonスクリプトでダウンロード（推奨）
+
+`huggingface-cli`が動作しない場合は、Pythonスクリプトを使用してください：
+
+```bash
+python << 'EOF'
+from huggingface_hub import snapshot_download, hf_hub_download
+import os
+
+# ディレクトリ作成
+os.makedirs("models/musetalk", exist_ok=True)
+os.makedirs("models/musetalkV15", exist_ok=True)
+os.makedirs("models/sd-vae", exist_ok=True)
+os.makedirs("models/whisper", exist_ok=True)
+os.makedirs("models/dwpose", exist_ok=True)
+os.makedirs("models/syncnet", exist_ok=True)
+
+print("Downloading MuseTalk v1.0...")
+hf_hub_download("TMElyralab/MuseTalk", "musetalk/musetalk.json", local_dir="models")
+hf_hub_download("TMElyralab/MuseTalk", "musetalk/pytorch_model.bin", local_dir="models")
+
+print("Downloading MuseTalk v1.5...")
+hf_hub_download("TMElyralab/MuseTalk", "musetalkV15/musetalk.json", local_dir="models")
+hf_hub_download("TMElyralab/MuseTalk", "musetalkV15/unet.pth", local_dir="models")
+
+print("Downloading SD-VAE...")
+snapshot_download("stabilityai/sd-vae-ft-mse", local_dir="models/sd-vae",
+                  allow_patterns=["config.json", "diffusion_pytorch_model.bin"])
+
+print("Downloading Whisper...")
+snapshot_download("openai/whisper-tiny", local_dir="models/whisper",
+                  allow_patterns=["config.json", "pytorch_model.bin", "preprocessor_config.json"])
+
+print("Downloading DWPose...")
+hf_hub_download("yzd-v/DWPose", "dw-ll_ucoco_384.pth", local_dir="models/dwpose")
+
+print("Downloading SyncNet...")
+hf_hub_download("ByteDance/LatentSync", "latentsync_syncnet.pt", local_dir="models/syncnet")
+
+print("✅ All models downloaded!")
+EOF
+```
+
+### 4.6 Face Parseモデルのダウンロード
+
+上記Pythonスクリプトとは別に、以下も実行してください：
+
+```bash
+pip install gdown
+
+# Face Parse BiSeNet
+gdown 154JgKpzCPW82qINcVieuPH3fZ2e0P812 -O models/face-parse-bisent/79999_iter.pth
+
+# ResNet18
+curl -L https://download.pytorch.org/models/resnet18-5c106cde.pth \
+  -o models/face-parse-bisent/resnet18-5c106cde.pth
+```
+
+### 4.7 自動ダウンロードスクリプト（代替・非推奨）
+
+> **注意**: `download_weights.sh`は`huggingface-cli`を使用しますが、新しいバージョンの`huggingface_hub`ではCLIが含まれていない場合があります。その場合は上記のPythonスクリプトを使用してください。
 
 ```bash
 # スクリプトに実行権限を付与
@@ -297,7 +357,7 @@ sh download_weights.sh
 
 > **注意**: `download_weights.sh`は中国のHugging Faceミラー（`hf-mirror.com`）を使用します。日本からアクセスする場合は、スクリプト内の`export HF_ENDPOINT=https://hf-mirror.com`をコメントアウトまたは削除してください。
 
-### 4.6 モデル構造の確認
+### 4.8 モデル構造の確認
 
 ```bash
 ls -la models/
