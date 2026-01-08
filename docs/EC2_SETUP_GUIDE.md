@@ -33,22 +33,24 @@
 以下のAMIを推奨します：
 
 ```
-Deep Learning AMI GPU PyTorch 2.0.1 (Ubuntu 20.04)
+Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)
 ```
 
 または
 
 ```
-Deep Learning AMI (Amazon Linux 2)
+Ubuntu Server 22.04 LTS
 ```
+
+> **注意**: Deep Learning AMIを使用する場合でも、CUDAの追加インストールが必要な場合があります。
 
 ### 1.3 EC2インスタンスの起動手順
 
 1. **AWSコンソール** → **EC2** → **インスタンスを起動**
 
 2. **AMI選択**:
-   - 「Deep Learning AMI」で検索
-   - Ubuntu 20.04 + PyTorch 2.0 を選択
+   - 「Ubuntu 22.04」で検索
+   - GPU対応AMIを選択
 
 3. **インスタンスタイプ選択**:
    - `g4dn.xlarge` を選択（推奨）
@@ -82,35 +84,83 @@ ssh -i "your-key.pem" ubuntu@<EC2-PUBLIC-IP>
 sudo apt update && sudo apt upgrade -y
 ```
 
-### 2.3 CUDA環境の確認
+### 2.3 CUDA環境のセットアップ
 
-Deep Learning AMIを使用している場合、CUDAは既にインストールされています：
+#### 2.3.1 GPU確認
 
 ```bash
-# CUDA確認
 nvidia-smi
+```
 
-# CUDAバージョン確認
+#### 2.3.2 CUDA Toolkit 11.8 のインストール
+
+Ubuntu 22.04では`libtinfo5`の依存関係問題が発生する場合があります。以下の手順で解決してください：
+
+```bash
+# libtinfo5 をインストール（依存関係問題の解決）
+wget http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
+sudo dpkg -i libtinfo5_6.3-2ubuntu0.1_amd64.deb
+
+# NVIDIAリポジトリの追加
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt update
+
+# CUDA Toolkit インストール
+sudo apt install -y cuda-toolkit-11-8
+```
+
+#### 2.3.3 環境変数の設定
+
+```bash
+echo 'export PATH=/usr/local/cuda-11.8/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# 確認
 nvcc --version
 ```
 
 ### 2.4 FFmpegのインストール
 
 ```bash
-# FFmpeg 4.4+をインストール
 sudo apt install -y ffmpeg
 
 # バージョン確認
 ffmpeg -version
 ```
 
-### 2.5 Conda環境の作成
+### 2.5 Minicondaのインストール
 
 ```bash
-# Condaの初期化（Deep Learning AMI使用時）
-source ~/anaconda3/etc/profile.d/conda.sh
+# Minicondaをダウンロード・インストール
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda
+eval "$($HOME/miniconda/bin/conda shell.bash hook)"
+conda init
+source ~/.bashrc
+```
 
-# MuseTalk専用環境の作成
+### 2.6 Conda環境の作成
+
+#### 2.6.1 利用規約への同意（必要な場合）
+
+```bash
+# Anacondaの利用規約に同意が必要な場合
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+```
+
+または、conda-forgeを使用して利用規約を回避：
+
+```bash
+# conda-forgeのみを使用する場合
+conda create -n musetalk python=3.10 -c conda-forge --override-channels -y
+```
+
+#### 2.6.2 環境作成（通常）
+
+```bash
 conda create -n musetalk python=3.10 -y
 conda activate musetalk
 ```
@@ -134,9 +184,13 @@ pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 \
     --index-url https://download.pytorch.org/whl/cu118
 ```
 
-### 3.3 依存パッケージのインストール
+### 3.3 基本パッケージのインストール
 
 ```bash
+# pip/setuptoolsを最新化
+pip install --upgrade pip setuptools wheel
+
+# 依存パッケージをインストール
 pip install -r requirements.txt
 ```
 
@@ -147,58 +201,114 @@ pip install --no-cache-dir -U openmim
 mim install mmengine
 mim install "mmcv==2.0.1"
 mim install "mmdet==3.1.0"
-mim install "mmpose==1.1.0"
 ```
+
+#### 3.4.1 mmpose のインストール（chumpy問題の回避）
+
+mmpose インストール時に`chumpy`のビルドエラーが発生する場合があります：
+
+```bash
+# 方法1: --no-deps でインストール（推奨）
+pip install mmpose==1.1.0 --no-deps
+
+# 必要な依存関係を個別インストール
+pip install xtcocotools munkres json_tricks
+
+# 方法2: chumpy を --no-build-isolation でインストール
+# pip install chumpy --no-build-isolation
+# mim install "mmpose==1.1.0"
+```
+
+> **注意**: `chumpy`はSMPLボディモデル用で、MuseTalkの顔リップシンクには不要です。
 
 ---
 
 ## 4. モデルのダウンロード
 
-### 4.1 自動ダウンロード
+### 4.1 huggingface-cli のインストール
 
 ```bash
+pip install -U "huggingface_hub[cli]"
+```
+
+### 4.2 ディレクトリ作成
+
+```bash
+mkdir -p models/musetalk models/musetalkV15 models/syncnet \
+         models/dwpose models/face-parse-bisent models/sd-vae models/whisper
+```
+
+### 4.3 モデルのダウンロード
+
+```bash
+# MuseTalk V1.0
+huggingface-cli download TMElyralab/MuseTalk \
+  --local-dir models \
+  --include "musetalk/musetalk.json" "musetalk/pytorch_model.bin"
+
+# MuseTalk V1.5
+huggingface-cli download TMElyralab/MuseTalk \
+  --local-dir models \
+  --include "musetalkV15/musetalk.json" "musetalkV15/unet.pth"
+
+# SD VAE
+huggingface-cli download stabilityai/sd-vae-ft-mse \
+  --local-dir models/sd-vae \
+  --include "config.json" "diffusion_pytorch_model.bin"
+
+# Whisper
+huggingface-cli download openai/whisper-tiny \
+  --local-dir models/whisper \
+  --include "config.json" "pytorch_model.bin" "preprocessor_config.json"
+
+# DWPose
+huggingface-cli download yzd-v/DWPose \
+  --local-dir models/dwpose \
+  --include "dw-ll_ucoco_384.pth"
+
+# SyncNet
+huggingface-cli download ByteDance/LatentSync \
+  --local-dir models/syncnet \
+  --include "latentsync_syncnet.pt"
+```
+
+### 4.4 Face Parse モデルのダウンロード
+
+```bash
+pip install gdown
+
+# Face Parse BiSeNet
+gdown --id 154JgKpzCPW82qINcVieuPH3fZ2e0P812 -O models/face-parse-bisent/79999_iter.pth
+
+# ResNet18
+curl -L https://download.pytorch.org/models/resnet18-5c106cde.pth \
+  -o models/face-parse-bisent/resnet18-5c106cde.pth
+```
+
+### 4.5 自動ダウンロードスクリプト（代替）
+
+```bash
+# スクリプトに実行権限を付与
+chmod +x download_weights.sh
+
+# 実行（中国ミラーを使用）
 sh download_weights.sh
 ```
 
-### 4.2 手動ダウンロード（自動が失敗した場合）
+> **注意**: `download_weights.sh`は中国のHugging Faceミラー（`hf-mirror.com`）を使用します。日本からアクセスする場合は、スクリプト内の`export HF_ENDPOINT=https://hf-mirror.com`をコメントアウトまたは削除してください。
 
-```bash
-# ディレクトリ作成
-mkdir -p models/musetalk models/musetalkV15 models/dwpose \
-         models/face-parse-bisent models/sd-vae models/whisper models/syncnet
-
-# Hugging Faceからダウンロード
-pip install huggingface_hub
-
-python -c "
-from huggingface_hub import hf_hub_download
-import os
-
-# MuseTalk v1.0
-hf_hub_download(repo_id='TMElyralab/MuseTalk',
-                filename='models/musetalk/musetalk.json',
-                local_dir='.')
-hf_hub_download(repo_id='TMElyralab/MuseTalk',
-                filename='models/musetalk/pytorch_model.bin',
-                local_dir='.')
-
-# MuseTalk v1.5
-hf_hub_download(repo_id='TMElyralab/MuseTalk',
-                filename='models/musetalkV15/musetalk.json',
-                local_dir='.')
-hf_hub_download(repo_id='TMElyralab/MuseTalk',
-                filename='models/musetalkV15/unet.pth',
-                local_dir='.')
-print('Download complete!')
-"
-```
-
-### 4.3 モデル構造の確認
+### 4.6 モデル構造の確認
 
 ```bash
 ls -la models/
-# 以下のディレクトリが存在することを確認:
-# musetalk/  musetalkV15/  dwpose/  face-parse-bisent/  sd-vae/  whisper/  syncnet/
+# 以下のディレクトリとファイルが存在することを確認:
+# musetalk/      - musetalk.json, pytorch_model.bin
+# musetalkV15/   - musetalk.json, unet.pth
+# dwpose/        - dw-ll_ucoco_384.pth
+# face-parse-bisent/ - 79999_iter.pth, resnet18-5c106cde.pth
+# sd-vae/        - config.json, diffusion_pytorch_model.bin
+# whisper/       - config.json, pytorch_model.bin, preprocessor_config.json
+# syncnet/       - latentsync_syncnet.pt
 ```
 
 ---
@@ -259,6 +369,8 @@ python -m scripts.realtime_inference \
 ### 5.3 バッチ実行スクリプト
 
 ```bash
+chmod +x inference.sh
+
 # v1.5通常推論
 sh inference.sh v1.5 normal
 
@@ -323,7 +435,7 @@ python app.py --use_float16
 
 #### 推論速度の向上
 
-```python
+```bash
 # scripts/inference.py の設定例
 --batch_size 4              # バッチサイズ調整
 --fps 25                    # フレームレート（25fps推奨）
@@ -374,7 +486,7 @@ python -m scripts.inference \
 
 `app.py` の主要パラメータ：
 
-```python
+```bash
 --server_name 0.0.0.0    # 外部アクセス許可
 --server_port 7860       # ポート番号
 --share                  # Gradio共有リンク生成
@@ -385,7 +497,92 @@ python -m scripts.inference \
 
 ## 7. トラブルシューティング
 
-### 7.1 CUDA関連エラー
+### 7.1 CUDA Toolkit インストール時の libtinfo5 エラー
+
+**エラー内容**:
+```
+nsight-systems-2022.4.2 : Depends: libtinfo5 but it is not installable
+```
+
+**解決策**:
+```bash
+# libtinfo5 を手動インストール
+wget http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
+sudo dpkg -i libtinfo5_6.3-2ubuntu0.1_amd64.deb
+
+# その後、CUDA Toolkitを再インストール
+sudo apt install -y cuda-toolkit-11-8
+```
+
+**代替策（Conda経由）**:
+```bash
+conda activate musetalk
+conda install -c nvidia cuda-toolkit=11.8 -y
+```
+
+### 7.2 Conda 利用規約エラー
+
+**エラー内容**:
+```
+CondaToSNonInteractiveError: Terms of Service have not been accepted
+```
+
+**解決策**:
+```bash
+# 利用規約に同意
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+```
+
+**代替策（conda-forge使用）**:
+```bash
+conda create -n musetalk python=3.10 -c conda-forge --override-channels -y
+```
+
+### 7.3 chumpy ビルドエラー（mmpose インストール時）
+
+**エラー内容**:
+```
+ModuleNotFoundError: No module named 'pip'
+ERROR: Failed to build 'chumpy' when getting requirements to build wheel
+```
+
+**解決策**:
+```bash
+# mmpose を依存関係なしでインストール
+pip install mmpose==1.1.0 --no-deps
+
+# 必要な依存関係のみ個別インストール
+pip install xtcocotools munkres json_tricks
+```
+
+> `chumpy`はSMPLボディモデル用で、MuseTalkには不要です。
+
+### 7.4 huggingface-cli: command not found
+
+**解決策**:
+```bash
+pip install -U "huggingface_hub[cli]"
+```
+
+### 7.5 Hugging Face 404 エラー
+
+**エラー内容**:
+```
+Entry Not Found for url: https://huggingface.co/...
+```
+
+**解決策**:
+`huggingface-cli download`コマンドを使用し、正しいファイルパスを指定：
+
+```bash
+# 正しいコマンド形式
+huggingface-cli download TMElyralab/MuseTalk \
+  --local-dir models \
+  --include "musetalk/musetalk.json" "musetalk/pytorch_model.bin"
+```
+
+### 7.6 CUDA関連エラー
 
 ```bash
 # CUDA確認
@@ -393,9 +590,10 @@ nvidia-smi
 
 # PyTorchでCUDA確認
 python -c "import torch; print(torch.cuda.is_available())"
+python -c "import torch; print(torch.version.cuda)"
 ```
 
-### 7.2 メモリ不足 (OOM)
+### 7.7 メモリ不足 (OOM)
 
 ```bash
 # float16を使用
@@ -405,7 +603,7 @@ python app.py --use_float16
 # configs内のbatch_sizeを減らす
 ```
 
-### 7.3 FFmpegエラー
+### 7.8 FFmpegエラー
 
 ```bash
 # FFmpegパス確認
@@ -415,15 +613,7 @@ which ffmpeg
 export FFMPEG_PATH=$(which ffmpeg)
 ```
 
-### 7.4 モデルダウンロードエラー
-
-```bash
-# Hugging Face認証（大容量モデル用）
-pip install huggingface_hub
-huggingface-cli login
-```
-
-### 7.5 権限エラー
+### 7.9 権限エラー
 
 ```bash
 # スクリプトに実行権限を付与
@@ -439,20 +629,41 @@ chmod +x inference.sh
 # 1. EC2接続
 ssh -i key.pem ubuntu@<IP>
 
-# 2. 環境準備
-source ~/anaconda3/etc/profile.d/conda.sh
-conda create -n musetalk python=3.10 -y && conda activate musetalk
+# 2. システム準備
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y ffmpeg
 
-# 3. インストール
+# 3. libtinfo5 インストール（CUDA依存関係）
+wget http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
+sudo dpkg -i libtinfo5_6.3-2ubuntu0.1_amd64.deb
+
+# 4. Conda環境準備
+conda create -n musetalk python=3.10 -c conda-forge --override-channels -y
+conda activate musetalk
+
+# 5. リポジトリクローン
 git clone https://github.com/TMElyralab/MuseTalk.git && cd MuseTalk
+
+# 6. パッケージインストール
+pip install --upgrade pip setuptools wheel
 pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118
 pip install -r requirements.txt
-pip install -U openmim && mim install mmengine "mmcv==2.0.1" "mmdet==3.1.0" "mmpose==1.1.0"
+pip install -U openmim && mim install mmengine "mmcv==2.0.1" "mmdet==3.1.0"
+pip install mmpose==1.1.0 --no-deps && pip install xtcocotools munkres json_tricks
 
-# 4. モデルダウンロード
-sh download_weights.sh
+# 7. モデルダウンロード
+pip install -U "huggingface_hub[cli]" gdown
+mkdir -p models/musetalk models/musetalkV15 models/syncnet models/dwpose models/face-parse-bisent models/sd-vae models/whisper
 
-# 5. 実行
+huggingface-cli download TMElyralab/MuseTalk --local-dir models --include "musetalk/*" "musetalkV15/*"
+huggingface-cli download stabilityai/sd-vae-ft-mse --local-dir models/sd-vae
+huggingface-cli download openai/whisper-tiny --local-dir models/whisper
+huggingface-cli download yzd-v/DWPose --local-dir models/dwpose --include "dw-ll_ucoco_384.pth"
+huggingface-cli download ByteDance/LatentSync --local-dir models/syncnet --include "latentsync_syncnet.pt"
+gdown --id 154JgKpzCPW82qINcVieuPH3fZ2e0P812 -O models/face-parse-bisent/79999_iter.pth
+curl -L https://download.pytorch.org/models/resnet18-5c106cde.pth -o models/face-parse-bisent/resnet18-5c106cde.pth
+
+# 8. 実行
 python app.py --use_float16 --server_name 0.0.0.0
 ```
 
